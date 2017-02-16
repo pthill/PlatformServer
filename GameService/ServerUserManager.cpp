@@ -1089,7 +1089,7 @@ bool CServerUserManager::InsertUserItem(IServerUserItem * * pIServerUserResult, 
 	//ÍÐ¹Üµ÷Õû
 	if ((UserInfoPlus.lRestrictScore>0L)&&(UserInfo.lScore>UserInfoPlus.lRestrictScore))
 	{
-		pServerUserItem->m_UserInfo.lScore=UserInfoPlus.lRestrictScore;
+		//pServerUserItem->m_UserInfo.lScore=UserInfoPlus.lRestrictScore;
 		pServerUserItem->m_lTrusteeScore=UserInfo.lScore-UserInfoPlus.lRestrictScore;
 	}
 

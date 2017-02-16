@@ -98,6 +98,8 @@ public:
 	VOID AddParameterOutput(LPCTSTR pszItem, LPSTR pszString, UINT uSize, ParameterDirectionEnum ParameterDirection=adParamInputOutput);
 	//插入参数
 	VOID AddParameterOutput(LPCTSTR pszItem, LPWSTR pszString, UINT uSize, ParameterDirectionEnum ParameterDirection=adParamInputOutput);
+	//插入参数
+	VOID AddParameterOutput(LPCTSTR pszItem, INT nValue, ParameterDirectionEnum ParameterDirection=adParamInputOutput);
 
 	//执行辅助
 public:

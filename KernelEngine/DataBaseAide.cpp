@@ -388,6 +388,14 @@ VOID CDataBaseAide::AddParameterOutput(LPCTSTR pszItem, LPWSTR pszString, UINT u
 	}
 }
 
+//²åÈë²ÎÊý
+VOID CDataBaseAide::AddParameterOutput(LPCTSTR pszItem, INT nValue, ParameterDirectionEnum ParameterDirection)
+{
+	if (m_pIDataBase != NULL)
+	{
+		((CDataBase*)m_pIDataBase)->AddParameter(pszItem, adInteger, ParameterDirection, 1, _variant_t(nValue));
+	}
+}
 
 
 

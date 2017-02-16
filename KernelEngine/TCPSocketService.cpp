@@ -190,7 +190,6 @@ bool CTCPSocketService::CloseSocket()
 	m_wRecvSize = 0;
 	m_dwServerIP = INADDR_NONE;
 	m_wPort = 0;
-
 	return true;
 }
 
@@ -248,6 +247,7 @@ bool CTCPSocketService::SendData(WORD wMainCmdID, WORD wSubCmdID)
 	//构造数据
 	BYTE cbDataBuffer[SOCKET_TCP_BUFFER];
 	TCP_Head * pHead = (TCP_Head *)cbDataBuffer;
+	pHead->TCPInfo.cbDataKind = DK_ENCRYPT;
 	pHead->CommandInfo.wMainCmdID = wMainCmdID;
 	pHead->CommandInfo.wSubCmdID = wSubCmdID;
 
@@ -373,10 +373,10 @@ bool CTCPSocketService::SendData(WORD wMainCmdID, WORD wSubCmdID, VOID * pData, 
 	//构造数据
 	BYTE cbDataBuffer[SOCKET_TCP_BUFFER];
 	TCP_Head * pHead = (TCP_Head *)cbDataBuffer;
+	pHead->TCPInfo.cbDataKind = DK_ENCRYPT;
 	pHead->CommandInfo.wMainCmdID = wMainCmdID;
 	pHead->CommandInfo.wSubCmdID = wSubCmdID;
-	if (wDataSize > 0)
-	{
+	if (wDataSize > 0) {
 		ASSERT(pData != NULL);
 		CopyMemory(pHead + 1, pData, wDataSize);
 	}
@@ -549,6 +549,50 @@ WORD CTCPSocketService::CrevasseBuffer(BYTE pcbDataBuffer[], WORD wDataSize)
 	return wDataSize;
 }
 
+//映射加密
+WORD CTCPSocketService::MappedBuffer(BYTE pcbDataBuffer[], WORD wDataSize)
+{
+	//变量定义
+	BYTE cbCheckCode = 0;
+	
+	//映射数据
+	for(WORD i=sizeof(TCP_Info);i<wDataSize;i++) {
+		cbCheckCode+=pcbDataBuffer[i];
+		pcbDataBuffer[i]=g_SendByteMap[pcbDataBuffer[i]];
+	}
+	
+	//设置数据
+	TCP_Info *pInfo	 = (TCP_Info*)pcbDataBuffer;
+	pInfo->cbCheckCode = ~cbCheckCode+1;
+	pInfo->wPacketSize = wDataSize;
+	pInfo->cbDataKind |= DK_MAPPED;
+    
+    return wDataSize;
+}
+
+//映射解密
+WORD CTCPSocketService::UnMappedBuffer(BYTE pcbDataBuffer[], WORD wDataSize)
+{
+    //变量定义
+	TCP_Info* pInfo = (TCP_Info*) pcbDataBuffer;
+	
+	//映射
+	if( (pInfo->cbDataKind & DK_MAPPED) !=0)
+	{
+		BYTE cbCheckCode = pInfo->cbCheckCode;
+		
+		for(WORD i=sizeof(TCP_Info);i<wDataSize;i++) {
+			cbCheckCode += g_RecvByteMap[pcbDataBuffer[i]];
+			pcbDataBuffer[i] = g_RecvByteMap[pcbDataBuffer[i]];
+		}
+
+		//效验
+		if (cbCheckCode != 0) 
+			throw TEXT("数据包效验码错误");
+	}
+	return wDataSize;
+}
+
 //随机映射
 WORD CTCPSocketService::SeedRandMap(WORD wSeed)
 {
@@ -605,6 +649,7 @@ LRESULT CTCPSocketService::OnSocketNotifyRead(WPARAM wParam, LPARAM lParam)
 		WORD wPacketSize = 0;
 		BYTE cbDataBuffer[SOCKET_TCP_BUFFER+sizeof(TCP_Head)];
 		TCP_Head * pHead = (TCP_Head *)m_cbRecvBuf;
+		m_cbDataKind = pHead->TCPInfo.cbDataKind;
 
 		while (m_wRecvSize >= sizeof(TCP_Head))
 		{
@@ -623,7 +668,9 @@ LRESULT CTCPSocketService::OnSocketNotifyRead(WPARAM wParam, LPARAM lParam)
 			MoveMemory(m_cbRecvBuf, m_cbRecvBuf + wPacketSize, m_wRecvSize);
 
 			//解密数据
-			WORD wRealySize = CrevasseBuffer(cbDataBuffer, wPacketSize);
+			WORD wRealySize = wPacketSize;
+			if (m_cbDataKind==DK_ENCRYPT) 
+				wRealySize=CrevasseBuffer(cbDataBuffer, wPacketSize);
 			ASSERT(wRealySize >= sizeof(TCP_Head));
 
 			//解释数据

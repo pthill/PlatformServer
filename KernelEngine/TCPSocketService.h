@@ -32,6 +32,9 @@ private:
 	CQueueServiceEvent				m_QueueServiceEvent;				//通知组件
 	CQueueService					m_QueueService;						//队列对象
 
+private:
+	BYTE							m_cbDataKind;						//结收类型		
+
 	//加密数据
 protected:
 	BYTE							m_cbSendRound;						//字节映射
@@ -134,6 +137,10 @@ protected:
 	WORD CrevasseBuffer(BYTE cbDataBuffer[], WORD wDataSize);
 	//加密数据
 	WORD EncryptBuffer(BYTE cbDataBuffer[], WORD wDataSize, WORD wBufferSize);
+	//映射加密
+	WORD MappedBuffer(BYTE pcbDataBuffer[], WORD wDataSize);
+	//映射解密
+	WORD UnMappedBuffer(BYTE pcbDataBuffer[], WORD wDataSize);
 
 	//内联函数
 private:

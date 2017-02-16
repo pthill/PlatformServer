@@ -98,6 +98,7 @@ CServerSocketItem::CServerSocketItem(WORD wIndex, IServerSocketItemSink * pIServ
 	m_dwSendPacketCount = 0;
 	m_dwRecvPacketCount = 0;
 	m_hSocket = INVALID_SOCKET;
+	m_cbDataKind = DK_ENCRYPT;
 }
 
 //析够函数
@@ -206,9 +207,16 @@ bool CServerSocketItem::SendData(WORD wMainCmdID, WORD wSubCmdID, WORD wRountID)
 
 	//构造数据
 	TCP_Head * pHead = (TCP_Head *)pOverLappedSend->m_cbBuffer;
+	pHead->TCPInfo.cbDataKind = m_cbDataKind;
 	pHead->CommandInfo.wMainCmdID = wMainCmdID;
 	pHead->CommandInfo.wSubCmdID = wSubCmdID;
-	WORD wSendSize = EncryptBuffer(pOverLappedSend->m_cbBuffer, sizeof(TCP_Head), sizeof(pOverLappedSend->m_cbBuffer));
+
+	//加密切换
+	WORD wSendSize = 0;
+	if (pHead->TCPInfo.cbDataKind==DK_ENCRYPT)
+		wSendSize=EncryptBuffer(pOverLappedSend->m_cbBuffer, sizeof(TCP_Head), sizeof(pOverLappedSend->m_cbBuffer));
+	else if(pHead->TCPInfo.cbDataKind==DK_MAPPED)
+		wSendSize=MappedBuffer(pOverLappedSend->m_cbBuffer, sizeof(TCP_Head));
 	pOverLappedSend->m_WSABuffer.len = wSendSize;
 
 	//发送数据
@@ -229,6 +237,11 @@ bool CServerSocketItem::SendData(WORD wMainCmdID, WORD wSubCmdID, WORD wRountID)
 //发送函数
 bool CServerSocketItem::SendData(void * pData, WORD wDataSize, WORD wMainCmdID, WORD wSubCmdID, WORD wRountID)
 {
+	//打印协议
+	TCHAR szDescribe[128]=TEXT(""); 
+	_sntprintf(szDescribe,CountArray(szDescribe),TEXT("(S)M=%d;S=%d"), wMainCmdID, wSubCmdID );
+	CTraceService::TraceString(szDescribe, TraceLevel_Exception);
+
 	//效验参数
 	ASSERT(wDataSize <= SOCKET_TCP_BUFFER);
 
@@ -246,6 +259,7 @@ bool CServerSocketItem::SendData(void * pData, WORD wDataSize, WORD wMainCmdID, 
 
 	//构造数据
 	TCP_Head * pHead = (TCP_Head *)pOverLappedSend->m_cbBuffer;
+	pHead->TCPInfo.cbDataKind=m_cbDataKind;
 	pHead->CommandInfo.wMainCmdID = wMainCmdID;
 	pHead->CommandInfo.wSubCmdID = wSubCmdID;
 	if (wDataSize > 0)
@@ -253,7 +267,13 @@ bool CServerSocketItem::SendData(void * pData, WORD wDataSize, WORD wMainCmdID, 
 		ASSERT(pData != NULL);
 		memcpy(pHead + 1, pData, wDataSize);
 	}
-	WORD wSendSize = EncryptBuffer(pOverLappedSend->m_cbBuffer, sizeof(TCP_Head) + wDataSize, sizeof(pOverLappedSend->m_cbBuffer));
+
+	//加密切换
+	WORD wSendSize = 0;
+	if (m_cbDataKind==DK_ENCRYPT)
+		wSendSize=EncryptBuffer(pOverLappedSend->m_cbBuffer, sizeof(TCP_Head) + wDataSize, sizeof(pOverLappedSend->m_cbBuffer));
+	else if(m_cbDataKind==DK_MAPPED)
+		wSendSize=MappedBuffer(pOverLappedSend->m_cbBuffer, sizeof(TCP_Head) + wDataSize);
 	pOverLappedSend->m_WSABuffer.len = wSendSize;
 
 	//发送数据
@@ -455,7 +475,6 @@ bool CServerSocketItem::OnRecvCompleted(COverLappedRecv * pOverLappedRecv, DWORD
 	}
 
 
-
 	//接收完成
 	m_wRecvSize += iRetCode;
 	BYTE cbBuffer[SOCKET_TCP_BUFFER];
@@ -472,10 +491,15 @@ bool CServerSocketItem::OnRecvCompleted(COverLappedRecv * pOverLappedRecv, DWORD
 			if (wPacketSize < sizeof(TCP_Head)) throw TEXT("数据包非法");
 			// if (pHead->TCPInfo.cbVersion != SOCKET_TCP_VER) throw TEXT("数据包版本错误");
 			if (m_wRecvSize < wPacketSize) break;
-
+			
 			//提取数据
 			CopyMemory(cbBuffer, m_cbRecvBuf, wPacketSize);
-			WORD wRealySize = CrevasseBuffer(cbBuffer, wPacketSize);
+			WORD wRealySize = wPacketSize;
+			m_cbDataKind = pHead->TCPInfo.cbDataKind;
+			if (pHead->TCPInfo.cbDataKind==DK_ENCRYPT)
+				wRealySize=CrevasseBuffer(cbBuffer, wPacketSize);
+			else if(pHead->TCPInfo.cbDataKind==DK_MAPPED)
+				wRealySize=UnMappedBuffer(cbBuffer, wPacketSize);
 			ASSERT(wRealySize >= sizeof(TCP_Head));
 			m_dwRecvPacketCount++;
 
@@ -484,12 +508,21 @@ bool CServerSocketItem::OnRecvCompleted(COverLappedRecv * pOverLappedRecv, DWORD
 			void * pDataBuffer = cbBuffer + sizeof(TCP_Head);
 			TCP_Command Command = ((TCP_Head *)cbBuffer)->CommandInfo;
 
+			//打印协议
+			TCHAR szDescribe[128]=TEXT(""); 
+			_sntprintf(szDescribe,CountArray(szDescribe),TEXT("(R)M=%d;S=%d"), Command.wMainCmdID, Command.wSubCmdID );
+			CTraceService::TraceString(szDescribe, TraceLevel_Exception);
+
 			//内核命令
 			if (Command.wMainCmdID == MDM_KN_COMMAND)
 			{
 				switch (Command.wSubCmdID)
 				{
-					case SUB_KN_DETECT_SOCKET:	//网络检测
+					case SUB_KN_DETECT_SOCKET:		//网络检测
+					{
+						break;
+					}
+					case SUB_KN_VALIDATE_SOCKET:	//验证命令
 					{
 						break;
 					}
@@ -544,6 +577,7 @@ bool CServerSocketItem::OnCloseCompleted()
 WORD CServerSocketItem::EncryptBuffer(BYTE pcbDataBuffer[], WORD wDataSize, WORD wBufferSize)
 {
 	WORD i = 0;
+
 	//效验参数
 	ASSERT(wDataSize >= sizeof(TCP_Head));
 	ASSERT(wDataSize <= (sizeof(TCP_Head) + SOCKET_TCP_BUFFER));
@@ -588,21 +622,6 @@ WORD CServerSocketItem::EncryptBuffer(BYTE pcbDataBuffer[], WORD wDataSize, WORD
 	m_dwSendPacketCount++;
 	m_dwSendXorKey = dwXorKey;
 
-	{
-		FILE * fTemp=fopen("D:\\1.txt","a");
-		if(NULL!=fTemp)
-		{
-			char pszRecv[128] = {0};
-			char pszSend[128] = {0}; 
-			sprintf(pszRecv, "[EncryptBuffer] m_dwRecvXorKey=%d;\n\r", m_dwRecvXorKey);
-			fwrite(pszRecv, 1, strlen(pszRecv), fTemp);
-			sprintf(pszSend, "[EncryptBuffer] m_dwSendXorKey=%d;\n\r", m_dwSendXorKey);
-			fwrite(pszSend, 1, strlen(pszRecv), fTemp);
-			fclose(fTemp);
-		}
-		fTemp=NULL;
-	}
-
 	return wDataSize;
 }
 
@@ -631,27 +650,11 @@ WORD CServerSocketItem::CrevasseBuffer(BYTE pcbDataBuffer[], WORD wDataSize)
 		if (wDataSize < (sizeof(TCP_Head) + sizeof(DWORD))) throw TEXT("数据包解密长度错误");
 		m_dwRecvXorKey = *(DWORD *)(pcbDataBuffer + sizeof(TCP_Head));
 		m_dwSendXorKey = m_dwRecvXorKey;
-		MoveMemory(pcbDataBuffer + sizeof(TCP_Head), pcbDataBuffer + sizeof(TCP_Head) + sizeof(DWORD),
-		           wDataSize - sizeof(TCP_Head) - sizeof(DWORD));
+		MoveMemory(pcbDataBuffer + sizeof(TCP_Head), pcbDataBuffer + sizeof(TCP_Head) + sizeof(DWORD), wDataSize - sizeof(TCP_Head) - sizeof(DWORD));
 		wDataSize -= sizeof(DWORD);
 		((TCP_Head *)pcbDataBuffer)->TCPInfo.wPacketSize -= sizeof(DWORD);
 	}
 	
-	{
-		FILE * fTemp=fopen("D:\\1.txt","a");
-		if(NULL!=fTemp)
-		{
-			char pszRecv[128] = {0};
-			char pszSend[128] = {0}; 
-			sprintf(pszRecv, "[CrevasseBuffer] m_dwRecvXorKey=%d;\n\r", m_dwRecvXorKey);
-			fwrite(pszRecv, 1, strlen(pszRecv), fTemp);
-			sprintf(pszSend, "[CrevasseBuffer] m_dwSendXorKey=%d;\n\r", m_dwSendXorKey);
-			fwrite(pszSend, 1, strlen(pszRecv), fTemp);
-			fclose(fTemp);
-		}
-		fTemp=NULL;
-	}
-
 	//解密数据
 	DWORD dwXorKey = m_dwRecvXorKey;
 	DWORD * pdwXor = (DWORD *)(pcbDataBuffer + sizeof(TCP_Info));
@@ -684,6 +687,50 @@ WORD CServerSocketItem::CrevasseBuffer(BYTE pcbDataBuffer[], WORD wDataSize)
 	if (cbCheckCode != 0) 
 		throw TEXT("数据包效验码错误");
 
+	return wDataSize;
+}
+
+//映射加密
+WORD CServerSocketItem::MappedBuffer(BYTE pcbDataBuffer[], WORD wDataSize)
+{
+	//变量定义
+	BYTE cbCheckCode = 0;
+	
+	//映射数据
+	for(WORD i=sizeof(TCP_Info);i<wDataSize;i++) {
+		cbCheckCode+=pcbDataBuffer[i];
+		pcbDataBuffer[i]=g_SendByteMap[pcbDataBuffer[i]];
+	}
+	
+	//设置数据
+	TCP_Info *pInfo	 = (TCP_Info*)pcbDataBuffer;
+	pInfo->cbCheckCode = ~cbCheckCode+1;
+	pInfo->wPacketSize = wDataSize;
+	pInfo->cbDataKind = DK_MAPPED;
+    
+    return wDataSize;
+}
+
+//映射解密
+WORD CServerSocketItem::UnMappedBuffer(BYTE pcbDataBuffer[], WORD wDataSize)
+{
+    //变量定义
+	TCP_Info* pInfo = (TCP_Info*) pcbDataBuffer;
+	
+	//映射
+	if( (pInfo->cbDataKind & DK_MAPPED) !=0)
+	{
+		BYTE cbCheckCode = pInfo->cbCheckCode;
+		
+		for(WORD i=sizeof(TCP_Info);i<wDataSize;i++) {
+			cbCheckCode += g_RecvByteMap[pcbDataBuffer[i]];
+			pcbDataBuffer[i] = g_RecvByteMap[pcbDataBuffer[i]];
+		}
+
+		//效验
+		if (cbCheckCode != 0) 
+			throw TEXT("数据包效验码错误");
+	}
 	return wDataSize;
 }
 
@@ -1286,7 +1333,7 @@ void CTCPNetworkEngine::OnQueueServiceSink(WORD wIdentifier, void * pBuffer, WOR
 				{
 					if ((dwNowTickCount - dwRecvTickCount) > dwBreakTickCount)
 					{
-						pServerSocketItem->CloseSocket(pServerSocketItem->GetRountID());
+						// pServerSocketItem->CloseSocket(pServerSocketItem->GetRountID());
 						continue;
 					}
 				}

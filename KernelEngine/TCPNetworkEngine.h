@@ -1,8 +1,11 @@
 #ifndef SOCKET_ENGINE_HEAD_FILE
 #define SOCKET_ENGINE_HEAD_FILE
 
-//组件头文件
+//TCPSession
+//TCPSessionFilter
 
+
+//组件头文件
 #include "KernelEngineHead.h"
 #include "QueueService.h"
 #include "QueueServiceEvent.h"
@@ -130,6 +133,9 @@ class CServerSocketItem
 protected:
 	DWORD							m_dwClientAddr;						//连接地址
 	DWORD							m_dwConnectTime;					//连接时间
+	
+private:
+	BYTE							m_cbDataKind;						//结收类型		
 
 	//核心变量
 protected:
@@ -270,6 +276,10 @@ private:
 	WORD EncryptBuffer(BYTE pcbDataBuffer[], WORD wDataSize, WORD wBufferSize);
 	//解密数据
 	WORD CrevasseBuffer(BYTE pcbDataBuffer[], WORD wDataSize);
+	//映射加密
+	WORD MappedBuffer(BYTE pcbDataBuffer[], WORD wDataSize);
+	//映射解密
+	WORD UnMappedBuffer(BYTE pcbDataBuffer[], WORD wDataSize);
 
 	//内联函数
 private:
